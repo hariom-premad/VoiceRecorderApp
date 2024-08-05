@@ -1,0 +1,3 @@
+class HelperFunctions {
+  audio = {};
+}
