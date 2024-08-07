@@ -11,14 +11,20 @@ import {
 } from 'react-native';
 import React, {useCallback, useState} from 'react';
 import {SafeAreaView} from 'react-native-safe-area-context';
-import Button from './uis/Button';
+
 import AudioRecorderPlayer, {
   AudioEncoderAndroidType,
   AudioSourceAndroidType,
   OutputFormatAndroidType,
 } from 'react-native-audio-recorder-player';
+
 import {permissions} from '../permissions';
 import RNFS from 'react-native-fs';
+
+import FontAwesome5 from 'react-native-vector-icons/FontAwesome5';
+import AntDesign from 'react-native-vector-icons/AntDesign';
+import Ionicons from 'react-native-vector-icons/Ionicons';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
 const {width: screenWidth} = Dimensions.get('screen');
 const audioRecorderPlayer = new AudioRecorderPlayer();
@@ -34,38 +40,23 @@ const RecorderScreen = () => {
     duration: '00:00:00',
   });
 
-  let dirs =
-    // RNFetchBlob.fs.dirs;
-    `${RNFS.DocumentDirectoryPath}`;
+  const [file, setFile] = useState([]);
+  const [showSendRecIcon, setShowSendRecIcon] = useState(false);
+  const [isPlaying, setIsPlaying] = useState('stopped');
+
+  let dirs = `${RNFS.DocumentDirectoryPath}`;
 
   let path = Platform.select({
     ios: undefined,
-    android: `${dirs}/recording.mp3`,
+    android: `${dirs}/Recording_${Date.now()}.mp3`,
   });
 
-  const onStatusPress = e => {
-    const touchX = e.nativeEvent.locationX;
-    console.log(`touchX: ${touchX}`);
-
-    const playWidth =
-      (data?.currentPositionSec / data?.currentDurationSec) *
-      (screenWidth - 56);
-    console.log(`currentPlayWidth: ${playWidth}`);
-
-    const currentPosition = Math.round(data?.currentPositionSec);
-
-    if (playWidth && playWidth < touchX) {
-      const addSecs = Math.round(currentPosition + 1000);
-      audioRecorderPlayer.seekToPlayer(addSecs);
-      console.log(`addSecs: ${addSecs}`);
-    } else {
-      const subSecs = Math.round(currentPosition - 1000);
-      audioRecorderPlayer.seekToPlayer(subSecs);
-      console.log(`subSecs: ${subSecs}`);
-    }
-  };
-
   const onStartRecord = async () => {
+    file.map(async ({path}) => {
+      await RNFS.unlink(path);
+    });
+
+    setFile([]);
     permissions
       .audio_permission()
       .then(async message => {
@@ -74,22 +65,22 @@ const RecorderScreen = () => {
           AudioSourceAndroid: AudioSourceAndroidType.MIC,
           OutputFormatAndroid: OutputFormatAndroidType.AAC_ADTS,
         };
-
         const uri = await audioRecorderPlayer.startRecorder(path, audioSet);
-
         audioRecorderPlayer.addRecordBackListener(e => {
-          // console.log('record-back', e);
           setData({
             ...data,
             recordSecs: e.currentPosition,
             recordTime: audioRecorderPlayer.mmssss(
               Math.floor(e.currentPosition),
             ),
+            currentPositionSec: 0,
+            currentDurationSec: 0,
+            playTime: '00:00:00',
+            duration: audioRecorderPlayer.mmssss(Math.floor(e.currentPosition)),
           });
         });
         // console.log(`uri: ${uri}`);
         path = {...path, [Platform?.OS]: uri};
-        console.log('path', path);
       })
       .catch(err => {
         Alert.alert(
@@ -108,61 +99,51 @@ const RecorderScreen = () => {
       });
   };
 
-  const onPauseRecord = async () => {
-    try {
-      const r = await audioRecorderPlayer.pauseRecorder();
-      console.log(r);
-    } catch (err) {
-      console.log('pauseRecord', err);
-    }
-  };
-
-  const onResumeRecord = async () => {
-    await audioRecorderPlayer.resumeRecorder();
-  };
-
   const onStopRecord = async () => {
-    const result = await audioRecorderPlayer.stopRecorder();
+    await audioRecorderPlayer.stopRecorder();
     audioRecorderPlayer.removeRecordBackListener();
     setData({
       ...data,
       recordSecs: 0,
     });
-    console.log(result);
+    const file = await RNFS.readDir(RNFS.DocumentDirectoryPath);
+    setFile(file);
   };
 
-  const onStartPlay = useCallback(async () => {
-    console.log('onStartPlay', path);
-
+  const onStartPlay = useCallback(async path => {
+    console.log('onStartPlay()');
     try {
-      const msg = await audioRecorderPlayer.startPlayer(path[Platform?.OS]);
-      const volume = await audioRecorderPlayer.setVolume(1.0);
-      console.log(`path: ${msg}`, `volume: ${volume}`);
+      setIsPlaying('playing');
+      await audioRecorderPlayer.startPlayer(path);
+      await audioRecorderPlayer.setVolume(1.0);
 
       audioRecorderPlayer.addPlayBackListener(e => {
-        console.log('playBackListener', e);
         setData({
           currentPositionSec: e.currentPosition,
           currentDurationSec: e.duration,
           playTime: audioRecorderPlayer.mmssss(Math.floor(e.currentPosition)),
           duration: audioRecorderPlayer.mmssss(Math.floor(e.duration)),
         });
+        if (e.isFinished) {
+          setIsPlaying('stopped');
+        }
       });
     } catch (err) {
       console.log('startPlayer error', err);
     }
-  }, [path]);
+  }, []);
 
   const onPausePlay = async () => {
+    setIsPlaying('paused');
     await audioRecorderPlayer.pausePlayer();
   };
 
   const onResumePlay = async () => {
+    setIsPlaying('playing');
     await audioRecorderPlayer.resumePlayer();
   };
 
   const onStopPlay = async () => {
-    console.log('onStopPlay');
     audioRecorderPlayer.stopPlayer();
     audioRecorderPlayer.removePlayBackListener();
   };
@@ -178,95 +159,69 @@ const RecorderScreen = () => {
     <SafeAreaView style={styles.container}>
       <Text style={styles.titleTxt}>Audio Recorder Player</Text>
       <Text style={styles.txtRecordCounter}>{data?.recordTime}</Text>
-      <View style={styles.viewRecorder}>
-        <View style={styles.recordBtnWrapper}>
-          <Button
-            style={styles.btn}
-            onPress={onStartRecord}
-            textStyle={styles.txt}>
-            Record
-          </Button>
-          <Button
-            style={[
-              styles.btn,
-              {
-                marginLeft: 12,
-              },
-            ]}
-            onPress={onPauseRecord}
-            textStyle={styles.txt}>
-            Pause
-          </Button>
-          <Button
-            style={[
-              styles.btn,
-              {
-                marginLeft: 12,
-              },
-            ]}
-            onPress={onResumeRecord}
-            textStyle={styles.txt}>
-            Resume
-          </Button>
-          <Button
-            style={[styles.btn, {marginLeft: 12}]}
-            onPress={onStopRecord}
-            textStyle={styles.txt}>
-            Stop
-          </Button>
-        </View>
+
+      <View
+        style={[
+          {
+            justifyContent: 'center',
+            alignItems: 'center',
+            backgroundColor: '#128C7E',
+            height: 45,
+            width: 45,
+            borderRadius: 26,
+            alignSelf: 'center',
+          },
+        ]}>
+        <TouchableOpacity
+          onLongPress={() => {
+            onStartRecord();
+          }}
+          onPressOut={() => {
+            onStopRecord();
+            setShowSendRecIcon(false);
+          }}>
+          {showSendRecIcon ? (
+            <AntDesign name="close" size={20} color="white" />
+          ) : (
+            <FontAwesome5 name="microphone" size={20} color="white" />
+          )}
+        </TouchableOpacity>
       </View>
-      <View style={styles.viewPlayer}>
-        <TouchableOpacity style={styles.viewBarWrapper} onPress={onStatusPress}>
-          <View style={styles.viewBar}>
-            <View style={[styles.viewBarPlay, {width: playWidth}]} />
+
+      {file.map((item, index) => (
+        <TouchableOpacity
+          key={index.toString()}
+          onPress={() => {
+            if (isPlaying === 'playing') {
+              onPausePlay();
+            } else if (isPlaying === 'stopped') {
+              onStartPlay(item?.path);
+            } else if (isPlaying === 'paused') {
+              onResumePlay();
+            }
+          }}
+          style={styles.playButton}>
+          <View
+            style={{
+              flexDirection: 'row',
+              // justifyContent: 'space-between',
+              alignItems: 'center',
+            }}>
+            {isPlaying === 'playing' ? (
+              <MaterialCommunityIcons name="pause" size={24} color="black" />
+            ) : (
+              <Ionicons name={'play'} size={30} color="white" />
+            )}
+            <Text style={styles.fileName}>{item?.name}</Text>
+          </View>
+
+          <View style={styles.row}>
+            <Text style={styles.fileName}>
+              {data?.playTime} / {data?.duration}
+            </Text>
           </View>
         </TouchableOpacity>
-        <Text style={styles.txtCounter}>
-          {data?.playTime} / {data?.duration}
-        </Text>
-        <View style={styles.playBtnWrapper}>
-          <Button
-            style={styles.btn}
-            onPress={onStartPlay}
-            textStyle={styles.txt}>
-            Play
-          </Button>
-          <Button
-            style={[
-              styles.btn,
-              {
-                marginLeft: 12,
-              },
-            ]}
-            onPress={onPausePlay}
-            textStyle={styles.txt}>
-            Pause
-          </Button>
-          <Button
-            style={[
-              styles.btn,
-              {
-                marginLeft: 12,
-              },
-            ]}
-            onPress={onResumePlay}
-            textStyle={styles.txt}>
-            Resume
-          </Button>
-          <Button
-            style={[
-              styles.btn,
-              {
-                marginLeft: 12,
-              },
-            ]}
-            onPress={onStopPlay}
-            textStyle={styles.txt}>
-            Stop
-          </Button>
-        </View>
-      </View>
+      ))}
     </SafeAreaView>
   );
 };
@@ -278,58 +233,13 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#455A64',
     flexDirection: 'column',
-    alignItems: 'center',
+    // alignItems: 'center',
   },
   titleTxt: {
     marginTop: 100,
     color: 'white',
     fontSize: 28,
-  },
-  viewRecorder: {
-    marginTop: 40,
-    width: '100%',
-    alignItems: 'center',
-  },
-  recordBtnWrapper: {
-    flexDirection: 'row',
-  },
-  viewPlayer: {
-    marginTop: 60,
-    alignSelf: 'stretch',
-    alignItems: 'center',
-  },
-  viewBarWrapper: {
-    marginTop: 28,
-    marginHorizontal: 28,
-    alignSelf: 'stretch',
-  },
-  viewBar: {
-    backgroundColor: '#ccc',
-    height: 4,
-    alignSelf: 'stretch',
-  },
-  viewBarPlay: {
-    backgroundColor: 'white',
-    height: 4,
-    width: 0,
-  },
-  playStatusTxt: {
-    marginTop: 8,
-    color: '#ccc',
-  },
-  playBtnWrapper: {
-    flexDirection: 'row',
-    marginTop: 40,
-  },
-  btn: {
-    borderColor: 'white',
-    borderWidth: 1,
-  },
-  txt: {
-    color: 'white',
-    fontSize: 14,
-    marginHorizontal: 8,
-    marginVertical: 4,
+    alignSelf: 'center',
   },
   txtRecordCounter: {
     marginTop: 32,
@@ -339,14 +249,23 @@ const styles = StyleSheet.create({
     fontWeight: '200',
     fontFamily: 'Helvetica Neue',
     letterSpacing: 3,
+    alignSelf: 'center',
   },
-  txtCounter: {
-    marginTop: 12,
+  row: {
+    flexDirection: 'row',
+    justifyContent: 'space-evenly',
+  },
+  fileName: {
+    fontSize: 12,
     color: 'white',
-    fontSize: 20,
-    textAlignVertical: 'center',
-    fontWeight: '200',
-    fontFamily: 'Helvetica Neue',
-    letterSpacing: 3,
+    fontWeight: 'bold',
+    marginLeft: 20,
+  },
+  playButton: {
+    backgroundColor: 'gray',
+    borderRadius: 50,
+    padding: 10,
+    margin: 10,
+    justifyContent: 'center',
   },
 });
